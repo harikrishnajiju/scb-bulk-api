@@ -1,0 +1,71 @@
+_format_version: "3.0"
+
+services:
+  - name: banking-api
+    url: http://api-service:5000
+    
+routes:
+  - name: bulk-extract
+    service: banking-api
+    paths: ["/api/v1/bulk/extract"]
+    methods: ["POST"]
+    
+  - name: bulk-load
+    service: banking-api
+    paths: ["/api/v1/bulk/load"]
+    methods: ["POST"]
+    
+  - name: streaming
+    service: banking-api
+    paths: ["/api/v1/stream"]
+    methods: ["GET"]
+    
+  - name: legacy
+    service: banking-api
+    paths: ["/api/v1/legacy"]
+    methods: ["POST"]
+    
+  - name: teams
+    service: banking-api
+    paths: ["/api/v1/teams"]
+    methods: ["GET"]
+    
+  - name: health
+    service: banking-api
+    paths: ["/health"]
+    methods: ["GET"]
+  # NEW: CSV processing routes
+  - name: csv-upload
+    service: banking-api
+    paths: ["/api/v1/csv/upload"]
+    methods: ["POST"]
+    strip_path: false
+    
+  - name: csv-download
+    service: banking-api
+    paths: ["/api/v1/csv/download"]
+    methods: ["GET"]
+    strip_path: false
+    
+  - name: csv-data-api
+    service: banking-api
+    paths: ["/api/v1/csv/data"]
+    methods: ["GET"]
+    strip_path: false
+
+plugins:
+  - name: cors
+    config:
+      origins: ["*"]
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "X-Auth-Token", "X-Team", "Authorization"]
+      
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 10000
+
+  # NEW: File upload size limit
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 10  # 10MB CSV files
