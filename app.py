@@ -8,9 +8,8 @@ import time
 from datetime import datetime
 import pandas as pd
 import io
-import redis
 
-# Use confluent-kafka instead of kafka-python (more reliable)
+# Use confluent-kafka with proper error handling
 try:
     from confluent_kafka import Producer, Consumer, KafkaError
     KAFKA_AVAILABLE = True
@@ -28,53 +27,6 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379')
 
 print(f"🚀 Starting Banking Bulk API Platform")
 print(f"📡 Kafka: {KAFKA_SERVERS} (Available: {KAFKA_AVAILABLE})")
-print(f"⚡ Redis: {REDIS_URL}")
-
-# Initialize Kafka Producer
-def init_kafka_producer():
-    if not KAFKA_AVAILABLE:
-        print("⚠️  Kafka not available, using fallback mode")
-        return None
-        
-    retries = 5
-    for i in range(retries):
-        try:
-            producer = Producer({
-                'bootstrap.servers': KAFKA_SERVERS,
-                'client.id': 'banking-api-producer',
-                'acks': 'all',
-                'retries': 3,
-                'batch.size': 16384,
-                'linger.ms': 10
-            })
-            print("✅ Kafka producer connected")
-            return producer
-        except Exception as e:
-            print(f"❌ Kafka connection attempt {i+1}/{retries} failed: {e}")
-            time.sleep(2)
-    
-    print("❌ Failed to connect to Kafka, using fallback mode")
-    return None
-
-# Initialize Redis
-def init_redis_client():
-    retries = 3
-    for i in range(retries):
-        try:
-            client = redis.from_url(REDIS_URL)
-            client.ping()
-            print("✅ Redis connected")
-            return client
-        except Exception as e:
-            print(f"❌ Redis connection attempt {i+1}/{retries} failed: {e}")
-            time.sleep(1)
-    
-    print("❌ Failed to connect to Redis, using in-memory fallback")
-    return None
-
-# Initialize connections
-kafka_producer = init_kafka_producer()
-redis_client = init_redis_client()
 
 # Kafka Topics
 TOPICS = {
@@ -85,13 +37,61 @@ TOPICS = {
     'LEGACY_REQUESTS': 'legacy-system-requests'
 }
 
-# Fallback storage
+# In-memory storage for Railway (with backup)
 csv_storage = {}
+kafka_message_cache = {}  # Cache Kafka messages for quick access
 audit_logs = []
 
-# Helper function to send to Kafka
+# Initialize Kafka Producer
+def init_kafka_producer():
+    if not KAFKA_AVAILABLE:
+        print("⚠️  Kafka not available, using fallback mode")
+        return None
+        
+    try:
+        producer = Producer({
+            'bootstrap.servers': KAFKA_SERVERS,
+            'client.id': 'banking-api-producer',
+            'acks': 'all',
+            'retries': 3,
+            'batch.size': 16384,
+            'linger.ms': 10,
+            'request.timeout.ms': 30000,
+            'delivery.timeout.ms': 60000
+        })
+        print("✅ Kafka producer connected")
+        return producer
+    except Exception as e:
+        print(f"❌ Kafka producer failed: {e}")
+        return None
+
+# Initialize Kafka Consumer
+def init_kafka_consumer():
+    if not KAFKA_AVAILABLE:
+        return None
+        
+    try:
+        consumer = Consumer({
+            'bootstrap.servers': KAFKA_SERVERS,
+            'group.id': 'banking-api-consumer',
+            'auto.offset.reset': 'earliest',
+            'enable.auto.commit': True,
+            'session.timeout.ms': 30000,
+            'request.timeout.ms': 30000
+        })
+        print("✅ Kafka consumer initialized")
+        return consumer
+    except Exception as e:
+        print(f"❌ Kafka consumer failed: {e}")
+        return None
+
+# Initialize connections
+kafka_producer = init_kafka_producer()
+kafka_consumer = init_kafka_consumer()
+
+# Enhanced Kafka send function
 def send_to_kafka(topic, message, key=None):
-    """Send message to Kafka with error handling"""
+    """Send message to Kafka with enhanced error handling"""
     if not kafka_producer:
         return False
     
@@ -104,27 +104,98 @@ def send_to_kafka(topic, message, key=None):
             topic=topic,
             key=key,
             value=message_json,
-            callback=lambda err, msg: print(f"✅ Kafka delivery: {msg.topic()}" if not err else f"❌ Kafka error: {err}")
+            callback=delivery_report
         )
         
         # Flush to ensure delivery
-        kafka_producer.flush(timeout=1)
+        kafka_producer.flush(timeout=5)
+        
+        # Also cache the message for immediate access
+        if key:
+            kafka_message_cache[key] = message
+        
         return True
         
     except Exception as e:
         print(f"❌ Failed to send to Kafka: {e}")
         return False
 
+def delivery_report(err, msg):
+    """Kafka delivery callback"""
+    if err is not None:
+        print(f"❌ Kafka delivery failed: {err}")
+    else:
+        print(f"✅ Kafka message delivered: {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
+
+# Enhanced Kafka consumer function
+def get_csv_data_from_kafka(job_id):
+    """Retrieve CSV data from Kafka with multiple strategies"""
+    
+    # Strategy 1: Check cache first (fastest)
+    if job_id in kafka_message_cache:
+        print(f"✅ Found data in Kafka cache for job: {job_id}")
+        return kafka_message_cache[job_id].get('data')
+    
+    # Strategy 2: Try to consume from Kafka topic
+    if not kafka_consumer:
+        print("❌ No Kafka consumer available")
+        return None
+    
+    try:
+        # Subscribe to the processed data topic
+        kafka_consumer.subscribe([TOPICS['CSV_PROCESSED']])
+        
+        # Poll for messages
+        timeout = 10  # 10 seconds timeout
+        end_time = time.time() + timeout
+        
+        while time.time() < end_time:
+            msg = kafka_consumer.poll(timeout=1.0)
+            
+            if msg is None:
+                continue
+                
+            if msg.error():
+                if msg.error().code() == KafkaError._PARTITION_EOF:
+                    continue
+                else:
+                    print(f"❌ Kafka error: {msg.error()}")
+                    break
+            
+            try:
+                # Parse message
+                message_data = json.loads(msg.value().decode('utf-8'))
+                
+                # Check if this is the job we're looking for
+                if message_data.get('job_id') == job_id:
+                    print(f"✅ Found data in Kafka for job: {job_id}")
+                    
+                    # Cache it for future access
+                    kafka_message_cache[job_id] = message_data
+                    
+                    return message_data.get('data')
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse Kafka message: {e}")
+                continue
+        
+        print(f"❌ Data not found in Kafka for job: {job_id}")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Kafka consumer error: {e}")
+        return None
+
 @app.route('/')
 def index():
     return {
         'service': 'SCB Banking Bulk API Platform',
-        'version': '2.0.0',
+        'version': '2.1.0',
         'status': 'live',
         'architecture': 'Kafka-enabled' if kafka_producer else 'Fallback-mode',
         'message': 'Replacing file transfers with real-time APIs',
         'kafka_enabled': kafka_producer is not None,
-        'redis_enabled': redis_client is not None,
+        'kafka_consumer_enabled': kafka_consumer is not None,
         'demo_endpoints': {
             'health': '/health',
             'teams': '/api/v1/teams',
@@ -132,7 +203,8 @@ def index():
             'bulk_extract': '/api/v1/bulk/extract',
             'csv_upload': '/api/v1/csv/upload',
             'csv_download': '/api/v1/csv/download/{job_id}',
-            'audit_logs': '/api/v1/audit/logs'
+            'audit_logs': '/api/v1/audit/logs',
+            'kafka_status': '/api/v1/kafka/status'
         }
     }
 
@@ -141,7 +213,7 @@ def health():
     status = 'healthy'
     services = {}
     
-    # Check Kafka
+    # Check Kafka Producer
     if kafka_producer:
         try:
             # Test Kafka by sending a health check message
@@ -149,24 +221,19 @@ def health():
                 'timestamp': datetime.utcnow().isoformat(),
                 'service': 'banking-api'
             })
-            services['kafka'] = 'connected' if test_sent else 'error'
+            services['kafka_producer'] = 'connected' if test_sent else 'error'
         except Exception as e:
-            services['kafka'] = f'error: {str(e)}'
+            services['kafka_producer'] = f'error: {str(e)}'
             status = 'degraded'
     else:
-        services['kafka'] = 'fallback_mode'
+        services['kafka_producer'] = 'fallback_mode'
         status = 'degraded'
     
-    # Check Redis
-    if redis_client:
-        try:
-            redis_client.ping()
-            services['redis'] = 'connected'
-        except Exception as e:
-            services['redis'] = f'error: {str(e)}'
-            status = 'degraded'
+    # Check Kafka Consumer
+    if kafka_consumer:
+        services['kafka_consumer'] = 'connected'
     else:
-        services['redis'] = 'fallback_mode'
+        services['kafka_consumer'] = 'fallback_mode'
         status = 'degraded'
     
     return {
@@ -174,7 +241,22 @@ def health():
         'timestamp': datetime.utcnow().isoformat(),
         'services': services,
         'kafka_topics': list(TOPICS.values()) if kafka_producer else 'disabled',
-        'storage_mode': 'kafka+redis' if kafka_producer and redis_client else 'memory'
+        'storage_mode': 'kafka+cache' if kafka_producer else 'memory',
+        'cached_jobs': len(kafka_message_cache)
+    }
+
+@app.route('/api/v1/kafka/status')
+def kafka_status():
+    """Detailed Kafka status endpoint"""
+    return {
+        'kafka_producer': kafka_producer is not None,
+        'kafka_consumer': kafka_consumer is not None,
+        'kafka_available': KAFKA_AVAILABLE,
+        'topics': TOPICS,
+        'cached_messages': len(kafka_message_cache),
+        'cached_jobs': list(kafka_message_cache.keys()),
+        'memory_storage': len(csv_storage),
+        'timestamp': datetime.utcnow().isoformat()
     }
 
 @app.route('/api/v1/teams')
@@ -187,8 +269,7 @@ def teams():
             'analytics-team': {'data_sources': ['insights', 'metrics']}
         },
         'total_teams': 4,
-        'kafka_enabled': kafka_producer is not None,
-        'redis_enabled': redis_client is not None
+        'kafka_enabled': kafka_producer is not None
     }
 
 @app.route('/api/v1/legacy/<program>', methods=['POST'])
@@ -262,7 +343,6 @@ def bulk_extract():
     job_id = str(uuid.uuid4())
     requesting_team = request.headers.get('X-Team', 'unknown-team')
     
-    # Create audit data
     audit_data = {
         'job_id': job_id,
         'event_type': 'bulk_extract_request',
@@ -272,7 +352,6 @@ def bulk_extract():
         'timestamp': datetime.utcnow().isoformat()
     }
     
-    # Log to Kafka or fallback
     kafka_logged = False
     if kafka_producer:
         kafka_logged = send_to_kafka(TOPICS['AUDIT_LOG'], audit_data, job_id)
@@ -320,9 +399,8 @@ def csv_upload():
             'status': 'ready'
         }
         
-        # Store in Kafka and Redis
+        # Store in Kafka with enhanced error handling
         kafka_logged = False
-        redis_cached = False
         
         if kafka_producer:
             # Send upload event
@@ -337,39 +415,22 @@ def csv_upload():
             
             kafka_logged = send_to_kafka(TOPICS['CSV_UPLOAD'], upload_event, job_id)
             
-            # Store processed data
+            # Store processed data in Kafka
             if kafka_logged:
-                kafka_logged = send_to_kafka(TOPICS['CSV_PROCESSED'], {
+                kafka_message = {
                     'job_id': job_id,
-                    'data': processed_data
-                }, job_id)
-        
-        # Store metadata in Redis
-        if redis_client:
-            try:
-                metadata = {
-                    'filename': csv_file.filename,
-                    'record_count': len(df),
-                    'uploaded_by': requesting_team,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'columns': list(df.columns)
+                    'data': processed_data,
+                    'timestamp': datetime.utcnow().isoformat()
                 }
-                redis_client.setex(f'csv_meta:{job_id}', 3600, json.dumps(metadata))
-                redis_cached = True
-            except Exception as e:
-                print(f"❌ Redis caching failed: {e}")
+                kafka_logged = send_to_kafka(TOPICS['CSV_PROCESSED'], kafka_message, job_id)
+                
+                # IMPORTANT: Also cache immediately for quick access
+                if kafka_logged:
+                    kafka_message_cache[job_id] = kafka_message
+                    print(f"✅ Data cached for immediate access: {job_id}")
         
-        # Fallback to memory if Kafka failed
-        if not kafka_logged:
-            csv_storage[job_id] = processed_data
-        
-        storage_backend = []
-        if kafka_logged:
-            storage_backend.append('kafka')
-        if redis_cached:
-            storage_backend.append('redis')
-        if not kafka_logged:
-            storage_backend.append('memory')
+        # Always store in memory as backup
+        csv_storage[job_id] = processed_data
         
         return {
             'job_id': job_id,
@@ -381,8 +442,7 @@ def csv_upload():
             'timestamp': datetime.utcnow().isoformat(),
             'kafka_enabled': kafka_producer is not None,
             'kafka_logged': kafka_logged,
-            'redis_cached': redis_cached,
-            'storage_backend': '+'.join(storage_backend)
+            'storage_backend': 'kafka+cache+memory' if kafka_logged else 'memory'
         }
         
     except Exception as e:
@@ -390,7 +450,7 @@ def csv_upload():
 
 @app.route('/api/v1/csv/download/<job_id>', methods=['GET'])
 def csv_download(job_id):
-    """System B downloads processed CSV data"""
+    """System B downloads processed CSV data from Kafka"""
     
     requesting_team = request.headers.get('X-Team', 'unknown-team')
     
@@ -405,27 +465,32 @@ def csv_download(job_id):
     if kafka_producer:
         send_to_kafka(TOPICS['CSV_DOWNLOAD'], download_event, job_id)
     
-    # Get data from storage
+    # Try multiple strategies to get data
     data = None
+    source = 'unknown'
     
-    # Try Redis first (fastest)
-    if redis_client:
-        try:
-            cached_data = redis_client.get(f'csv_data:{job_id}')
-            if cached_data:
-                data = json.loads(cached_data)
-                print(f"✅ Data retrieved from Redis cache")
-        except Exception as e:
-            print(f"❌ Redis retrieval failed: {e}")
+    # Strategy 1: Kafka cache (fastest)
+    if job_id in kafka_message_cache:
+        data = kafka_message_cache[job_id].get('data')
+        source = 'kafka_cache'
+        print(f"✅ Retrieved from Kafka cache: {job_id}")
     
-    # Fallback to memory storage
+    # Strategy 2: Try Kafka consumer
+    if not data and kafka_consumer:
+        data = get_csv_data_from_kafka(job_id)
+        if data:
+            source = 'kafka_consumer'
+            print(f"✅ Retrieved from Kafka consumer: {job_id}")
+    
+    # Strategy 3: Memory fallback
     if not data:
         data = csv_storage.get(job_id)
         if data:
-            print(f"✅ Data retrieved from memory storage")
+            source = 'memory'
+            print(f"✅ Retrieved from memory: {job_id}")
     
     if not data:
-        return {'error': 'Job not found or expired'}, 404
+        return {'error': f'Job not found: {job_id}', 'searched_in': ['kafka_cache', 'kafka_consumer', 'memory']}, 404
     
     try:
         # Convert to CSV
@@ -438,6 +503,7 @@ def csv_download(job_id):
         response = make_response(csv_content)
         response.headers['Content-Type'] = 'text/csv'
         response.headers['Content-Disposition'] = f'attachment; filename=processed_{data["filename"]}'
+        response.headers['X-Data-Source'] = source
         
         return response
         
@@ -450,27 +516,36 @@ def csv_data_api(job_id):
     
     requesting_team = request.headers.get('X-Team', 'unknown-team')
     
-    # Get data from storage (same logic as download)
+    # Try multiple strategies to get data
     data = None
-    storage_source = 'unknown'
+    source = 'unknown'
     
-    # Try Redis first
-    if redis_client:
-        try:
-            cached_data = redis_client.get(f'csv_data:{job_id}')
-            if cached_data:
-                data = json.loads(cached_data)
-                storage_source = 'redis'
-        except Exception as e:
-            print(f"❌ Redis retrieval failed: {e}")
+    # Strategy 1: Kafka cache (fastest)
+    if job_id in kafka_message_cache:
+        data = kafka_message_cache[job_id].get('data')
+        source = 'kafka_cache'
+        print(f"✅ Retrieved from Kafka cache: {job_id}")
     
-    # Fallback to memory
+    # Strategy 2: Try Kafka consumer
+    if not data and kafka_consumer:
+        data = get_csv_data_from_kafka(job_id)
+        if data:
+            source = 'kafka_consumer'
+            print(f"✅ Retrieved from Kafka consumer: {job_id}")
+    
+    # Strategy 3: Memory fallback
     if not data:
         data = csv_storage.get(job_id)
-        storage_source = 'memory'
+        if data:
+            source = 'memory'
+            print(f"✅ Retrieved from memory: {job_id}")
     
     if not data:
-        return {'error': 'Job not found or expired'}, 404
+        return {
+            'error': f'Job not found: {job_id}',
+            'searched_in': ['kafka_cache', 'kafka_consumer', 'memory'],
+            'available_jobs': list(kafka_message_cache.keys()) + list(csv_storage.keys())
+        }, 404
     
     # Apply filters
     filters = request.args.to_dict()
@@ -502,10 +577,9 @@ def csv_data_api(job_id):
             'uploaded_by': data.get('uploaded_by', 'unknown'),
             'columns': data['columns']
         },
-        'storage_backend': storage_source,
+        'storage_backend': source,
         'requesting_team': requesting_team,
-        'kafka_enabled': kafka_producer is not None,
-        'redis_enabled': redis_client is not None
+        'kafka_enabled': kafka_producer is not None
     }
 
 @app.route('/api/v1/audit/logs', methods=['GET'])
@@ -513,8 +587,6 @@ def audit_logs_api():
     """Get audit logs"""
     
     limit = int(request.args.get('limit', 10))
-    
-    # For now, return in-memory logs (in production, implement Kafka consumer)
     logs = audit_logs[-limit:] if audit_logs else []
     
     return {
@@ -525,22 +597,12 @@ def audit_logs_api():
         'kafka_enabled': kafka_producer is not None
     }
 
-# Store processed CSV data in Redis for faster access
-def cache_csv_data_in_redis(job_id, data):
-    """Cache CSV data in Redis for faster retrieval"""
-    if redis_client:
-        try:
-            redis_client.setex(f'csv_data:{job_id}', 3600, json.dumps(data))
-            return True
-        except Exception as e:
-            print(f"❌ Failed to cache in Redis: {e}")
-    return False
-
 if __name__ == '__main__':
     print("🚀 Banking Bulk API Platform Starting...")
     print("📋 Features:")
     print(f"   • Kafka messaging: {'✅ Enabled' if kafka_producer else '❌ Fallback mode'}")
-    print(f"   • Redis caching: {'✅ Enabled' if redis_client else '❌ Fallback mode'}")
+    print(f"   • Kafka consumer: {'✅ Enabled' if kafka_consumer else '❌ Fallback mode'}")
+    print("   • Multi-tier storage: Kafka + Cache + Memory")
     print("   • Real-time CSV processing")
     print("   • Complete audit trails")
     print("   • Legacy system integration")
