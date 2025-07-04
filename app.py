@@ -34,8 +34,19 @@ CORS(app)
 # Configuration
 KAFKA_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:29092')
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379')
-MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '10000'))  # 10K records per chunk
-KAFKA_MAX_MESSAGE_SIZE = int(os.getenv('KAFKA_MAX_MESSAGE_SIZE', '900000'))  # 900KB
+
+# Safe environment variable parsing with error handling
+try:
+    MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '10000'))
+except ValueError:
+    print("Warning: Invalid MAX_CHUNK_SIZE environment variable, using default 10000")
+    MAX_CHUNK_SIZE = 10000
+
+try:
+    KAFKA_MAX_MESSAGE_SIZE = int(os.getenv('KAFKA_MAX_MESSAGE_SIZE', '900000'))
+except ValueError:
+    print("Warning: Invalid KAFKA_MAX_MESSAGE_SIZE environment variable, using default 900000")
+    KAFKA_MAX_MESSAGE_SIZE = 900000
 
 print(f"Starting Banking Bulk API Platform")
 print(f"Kafka: {KAFKA_SERVERS} (Available: {KAFKA_AVAILABLE})")
