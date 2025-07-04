@@ -3,9 +3,11 @@ _format_version: "3.0"
 services:
   - name: banking-api
     url: http://api-service:5000
-    
+    read_timeout: 300000
+    write_timeout: 300000
+    connect_timeout: 60000
+
 routes:
-  # Existing routes
   - name: health
     service: banking-api
     paths: ["/health"]
@@ -26,26 +28,52 @@ routes:
     paths: ["/api/v1/bulk/extract"]
     methods: ["POST"]
     
-  # CSV processing routes
   - name: csv-upload
     service: banking-api
     paths: ["/api/v1/csv/upload"]
     methods: ["POST"]
+    request_buffering: false
+    response_buffering: false
+    
+  - name: csv-upload-streaming
+    service: banking-api
+    paths: ["/api/v1/csv/upload/stream"]
+    methods: ["POST"]
+    request_buffering: false
+    response_buffering: false
     
   - name: csv-download
     service: banking-api
     paths: ["/api/v1/csv/download"]
     methods: ["GET"]
+    request_buffering: false
+    response_buffering: false
+    
+  - name: csv-stream
+    service: banking-api
+    paths: ["/api/v1/csv/stream"]
+    methods: ["GET"]
+    request_buffering: false
+    response_buffering: false
     
   - name: csv-data-api
     service: banking-api
     paths: ["/api/v1/csv/data"]
     methods: ["GET"]
     
-  # NEW: Audit logs
+  - name: csv-job-status
+    service: banking-api
+    paths: ["/api/v1/csv/jobs"]
+    methods: ["GET"]
+    
   - name: audit-logs
     service: banking-api
     paths: ["/api/v1/audit/logs"]
+    methods: ["GET"]
+    
+  - name: system-stats
+    service: banking-api
+    paths: ["/api/v1/system/stats"]
     methods: ["GET"]
     
   - name: root
@@ -60,7 +88,14 @@ plugins:
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
       headers: ["Accept", "Content-Type", "X-Team", "Authorization"]
       
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 1000  # 1GB max upload
+      
   - name: rate-limiting
     config:
-      minute: 1000
-      hour: 10000
+      minute: 100
+      hour: 1000
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
