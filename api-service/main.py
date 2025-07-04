@@ -19,10 +19,10 @@ KAFKA_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://banking_user:banking_pass@localhost:5432/banking_api')
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
 
-print(f"🚀 Starting Banking Bulk API Service")
-print(f"📡 Kafka: {KAFKA_SERVERS}")
-print(f"🗄️  Database: {DATABASE_URL}")
-print(f"⚡ Redis: {REDIS_URL}")
+print(f"Starting Banking Bulk API Service")
+print(f"Kafka: {KAFKA_SERVERS}")
+print(f"Database: {DATABASE_URL}")
+print(f"Redis: {REDIS_URL}")
 
 # Initialize connections with retry logic
 def init_kafka_producer():
@@ -35,10 +35,10 @@ def init_kafka_producer():
                 acks='all',
                 retries=3
             )
-            print("✅ Kafka producer connected")
+            print("Kafka producer connected")
             return producer
         except Exception as e:
-            print(f"❌ Kafka connection attempt {i+1}/{retries} failed: {e}")
+            print(f"Kafka connection attempt {i+1}/{retries} failed: {e}")
             time.sleep(2)
     raise Exception("Failed to connect to Kafka")
 
@@ -48,10 +48,10 @@ def init_redis_client():
         try:
             client = redis.from_url(REDIS_URL)
             client.ping()
-            print("✅ Redis connected")
+            print("Redis connected")
             return client
         except Exception as e:
-            print(f"❌ Redis connection attempt {i+1}/{retries} failed: {e}")
+            print(f"Redis connection attempt {i+1}/{retries} failed: {e}")
             time.sleep(2)
     raise Exception("Failed to connect to Redis")
 
@@ -97,7 +97,7 @@ def index():
 @app.route('/api/v1/bulk/extract', methods=['POST'])
 def bulk_extract():
     """
-    🎯 CORE FEATURE: Replace file exports with streaming API
+    CORE FEATURE: Replace file exports with streaming API
     
     Example: Risk team requests customer data from Operations team
     OLD: Operations exports CSV → uploads to shared drive → Risk downloads
@@ -108,7 +108,7 @@ def bulk_extract():
         requesting_team = request.headers.get('X-Team', 'unknown-team')
         job_id = str(uuid.uuid4())
         
-        print(f"📊 Bulk extract request from {requesting_team}: {request_data}")
+        print(f"Bulk extract request from {requesting_team}: {request_data}")
         
         # Validate request
         if not request_data.get('source'):
@@ -146,13 +146,13 @@ def bulk_extract():
         }
         
     except Exception as e:
-        print(f"❌ Error in bulk_extract: {e}")
+        print(f"Error in bulk_extract: {e}")
         return {'error': f'Internal error: {str(e)}'}, 500
 
 @app.route('/api/v1/bulk/load', methods=['POST'])
 def bulk_load():
     """
-    🎯 CORE FEATURE: Replace file imports with streaming API
+    CORE FEATURE: Replace file imports with streaming API
     
     Example: Analytics team loads processed data from Risk team
     OLD: Risk exports file → Analytics downloads → imports to database
@@ -163,7 +163,7 @@ def bulk_load():
         requesting_team = request.headers.get('X-Team', 'unknown-team')
         job_id = str(uuid.uuid4())
         
-        print(f"📥 Bulk load request from {requesting_team}: {request_data}")
+        print(f"Bulk load request from {requesting_team}: {request_data}")
         
         # Validate request
         if not request_data.get('target'):
@@ -195,19 +195,19 @@ def bulk_load():
         }
         
     except Exception as e:
-        print(f"❌ Error in bulk_load: {e}")
+        print(f"Error in bulk_load: {e}")
         return {'error': f'Internal error: {str(e)}'}, 500
 
 @app.route('/api/v1/stream/<job_id>')
 def stream_results(job_id):
     """
-    🎯 CORE FEATURE: Stream results in real-time instead of downloading files
+    CORE FEATURE: Stream results in real-time instead of downloading files
     
     This replaces the "download CSV from shared drive" step
     """
     def generate():
         try:
-            print(f"🌊 Starting stream for job {job_id}")
+            print(f"Starting stream for job {job_id}")
             
             # Create consumer for this specific job
             consumer = KafkaConsumer(
@@ -232,11 +232,11 @@ def stream_results(job_id):
                 
                 # Check if job is complete
                 if message.value.get('status') == 'complete':
-                    print(f"✅ Stream completed for job {job_id}, sent {record_count} records")
+                    print(f"Stream completed for job {job_id}, sent {record_count} records")
                     break
                     
         except Exception as e:
-            print(f"❌ Error in stream {job_id}: {e}")
+            print(f"Error in stream {job_id}: {e}")
             yield f"data: {json.dumps({'error': str(e), 'job_id': job_id})}\n\n"
     
     return Response(generate(), mimetype='text/event-stream')
@@ -257,7 +257,7 @@ def job_status(job_id):
 @app.route('/api/v1/legacy/<program>', methods=['POST'])
 def legacy_integration(program):
     """
-    🎯 CORE FEATURE: Modern API wrapper for legacy systems
+    CORE FEATURE: Modern API wrapper for legacy systems
     
     Example: Call mainframe COBOL programs via REST API
     OLD: Submit batch file → overnight processing → pick up result file
@@ -268,8 +268,8 @@ def legacy_integration(program):
         requesting_team = request.headers.get('X-Team', 'unknown-team')
         job_id = str(uuid.uuid4())
         
-        print(f"🏛️  Legacy system call: {program} from {requesting_team}")
-        print(f"📋 Parameters: {request_data}")
+        print(f"Legacy system call: {program} from {requesting_team}")
+        print(f"Parameters: {request_data}")
         
         # Simulate legacy system integration
         result = simulate_legacy_call(program, request_data)
@@ -284,7 +284,7 @@ def legacy_integration(program):
         }
         
     except Exception as e:
-        print(f"❌ Error in legacy call {program}: {e}")
+        print(f"Error in legacy call {program}: {e}")
         return {'error': str(e)}, 500
 
 def simulate_legacy_call(program, params):
@@ -473,7 +473,7 @@ def process_bulk_jobs():
     """
     Background worker to process bulk extract and load jobs
     """
-    print("🔄 Starting background job processor...")
+    print("Starting background job processor...")
     
     try:
         consumer = KafkaConsumer(
@@ -489,7 +489,7 @@ def process_bulk_jobs():
                 job_data = message.value
                 job_id = job_data['job_id']
                 
-                print(f"🔄 Processing job {job_id} from topic {message.topic}")
+                print(f"Processing job {job_id} from topic {message.topic}")
                 
                 if message.topic == 'bulk-extract-jobs':
                     process_extract_job(job_id, job_data)
@@ -497,10 +497,10 @@ def process_bulk_jobs():
                     process_load_job(job_id, job_data)
                     
             except Exception as e:
-                print(f"❌ Error processing job: {e}")
+                print(f"Error processing job: {e}")
                 
     except Exception as e:
-        print(f"❌ Error in job processor: {e}")
+        print(f"Error in job processor: {e}")
 
 def process_extract_job(job_id, job_data):
     """
@@ -512,7 +512,7 @@ def process_extract_job(job_id, job_data):
         filters = request.get('filters', {})
         limit = request.get('limit', 100)
         
-        print(f"📊 Extracting data from {source} with filters: {filters}")
+        print(f"Extracting data from {source} with filters: {filters}")
         
         # Simulate data extraction with realistic banking data
         for i in range(min(limit, 100)):  # Limit to 100 for demo
@@ -545,10 +545,10 @@ def process_extract_job(job_id, job_data):
         job_metadata['total_records'] = min(limit, 100)
         redis_client.setex(f'job:{job_id}', 3600, json.dumps(job_metadata))
         
-        print(f"✅ Extract job {job_id} completed, {min(limit, 100)} records processed")
+        print(f"Extract job {job_id} completed, {min(limit, 100)} records processed")
         
     except Exception as e:
-        print(f"❌ Error in extract job {job_id}: {e}")
+        print(f"Error in extract job {job_id}: {e}")
 
 def generate_customer_record(index, filters):
     """Generate realistic customer data"""
@@ -604,7 +604,7 @@ def process_load_job(job_id, job_data):
         request = job_data['request']
         target = request['target']
         
-        print(f"📥 Loading data to {target}")
+        print(f"Loading data to {target}")
         
         # Simulate data loading processing
         time.sleep(1)
@@ -615,15 +615,15 @@ def process_load_job(job_id, job_data):
         job_metadata['completed_at'] = datetime.utcnow().isoformat()
         redis_client.setex(f'job:{job_id}', 3600, json.dumps(job_metadata))
         
-        print(f"✅ Load job {job_id} completed for target: {target}")
+        print(f"Load job {job_id} completed for target: {target}")
         
     except Exception as e:
-        print(f"❌ Error in load job {job_id}: {e}")
+        print(f"Error in load job {job_id}: {e}")
 
 # Start the application
 if __name__ == '__main__':
-    print("🚀 Banking Bulk API Platform Starting...")
-    print("📋 Features:")
+    print("Banking Bulk API Platform Starting...")
+    print("Features:")
     print("   • Replace file transfers with real-time APIs")
     print("   • Stream data instead of downloading files")
     print("   • Modern wrapper for legacy systems")
@@ -632,7 +632,7 @@ if __name__ == '__main__':
     # Start background job processor
     job_processor_thread = threading.Thread(target=process_bulk_jobs, daemon=True)
     job_processor_thread.start()
-    print("✅ Background job processor started")
+    print("Background job processor started")
     
-    print("🌐 API Server starting on http://0.0.0.0:5000")
+    print("API Server starting on http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)

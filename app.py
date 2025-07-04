@@ -13,9 +13,9 @@ import io
 try:
     from confluent_kafka import Producer, Consumer, KafkaError
     KAFKA_AVAILABLE = True
-    print("✅ Confluent Kafka library loaded successfully")
+    print("Confluent Kafka library loaded successfully")
 except ImportError as e:
-    print(f"⚠️  Kafka library not available: {e}")
+    print(f"Kafka library not available: {e}")
     KAFKA_AVAILABLE = False
 
 app = Flask(__name__)
@@ -25,8 +25,8 @@ CORS(app)
 KAFKA_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:29092')
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379')
 
-print(f"🚀 Starting Banking Bulk API Platform")
-print(f"📡 Kafka: {KAFKA_SERVERS} (Available: {KAFKA_AVAILABLE})")
+print(f"Starting Banking Bulk API Platform")
+print(f"Kafka: {KAFKA_SERVERS} (Available: {KAFKA_AVAILABLE})")
 
 # Kafka Topics
 TOPICS = {
@@ -45,7 +45,7 @@ audit_logs = []
 # Initialize Kafka Producer
 def init_kafka_producer():
     if not KAFKA_AVAILABLE:
-        print("⚠️  Kafka not available, using fallback mode")
+        print("Kafka not available, using fallback mode")
         return None
         
     try:
@@ -59,10 +59,10 @@ def init_kafka_producer():
             'request.timeout.ms': 30000,
             'delivery.timeout.ms': 60000
         })
-        print("✅ Kafka producer connected")
+        print("Kafka producer connected")
         return producer
     except Exception as e:
-        print(f"❌ Kafka producer failed: {e}")
+        print(f"Kafka producer failed: {e}")
         return None
 
 # Initialize Kafka Consumer
@@ -79,10 +79,10 @@ def init_kafka_consumer():
             'session.timeout.ms': 30000,
             'request.timeout.ms': 30000
         })
-        print("✅ Kafka consumer initialized")
+        print("Kafka consumer initialized")
         return consumer
     except Exception as e:
-        print(f"❌ Kafka consumer failed: {e}")
+        print(f"Kafka consumer failed: {e}")
         return None
 
 # Initialize connections
@@ -117,15 +117,15 @@ def send_to_kafka(topic, message, key=None):
         return True
         
     except Exception as e:
-        print(f"❌ Failed to send to Kafka: {e}")
+        print(f"Failed to send to Kafka: {e}")
         return False
 
 def delivery_report(err, msg):
     """Kafka delivery callback"""
     if err is not None:
-        print(f"❌ Kafka delivery failed: {err}")
+        print(f"Kafka delivery failed: {err}")
     else:
-        print(f"✅ Kafka message delivered: {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
+        print(f"Kafka message delivered: {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
 
 # Enhanced Kafka consumer function
 def get_csv_data_from_kafka(job_id):
@@ -133,12 +133,12 @@ def get_csv_data_from_kafka(job_id):
     
     # Strategy 1: Check cache first (fastest)
     if job_id in kafka_message_cache:
-        print(f"✅ Found data in Kafka cache for job: {job_id}")
+        print(f"Found data in Kafka cache for job: {job_id}")
         return kafka_message_cache[job_id].get('data')
     
     # Strategy 2: Try to consume from Kafka topic
     if not kafka_consumer:
-        print("❌ No Kafka consumer available")
+        print("No Kafka consumer available")
         return None
     
     try:
@@ -159,7 +159,7 @@ def get_csv_data_from_kafka(job_id):
                 if msg.error().code() == KafkaError._PARTITION_EOF:
                     continue
                 else:
-                    print(f"❌ Kafka error: {msg.error()}")
+                    print(f"Kafka error: {msg.error()}")
                     break
             
             try:
@@ -168,7 +168,7 @@ def get_csv_data_from_kafka(job_id):
                 
                 # Check if this is the job we're looking for
                 if message_data.get('job_id') == job_id:
-                    print(f"✅ Found data in Kafka for job: {job_id}")
+                    print(f"Found data in Kafka for job: {job_id}")
                     
                     # Cache it for future access
                     kafka_message_cache[job_id] = message_data
@@ -176,14 +176,14 @@ def get_csv_data_from_kafka(job_id):
                     return message_data.get('data')
                     
             except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse Kafka message: {e}")
+                print(f"Failed to parse Kafka message: {e}")
                 continue
         
-        print(f"❌ Data not found in Kafka for job: {job_id}")
+        print(f"Data not found in Kafka for job: {job_id}")
         return None
         
     except Exception as e:
-        print(f"❌ Kafka consumer error: {e}")
+        print(f"Kafka consumer error: {e}")
         return None
 
 @app.route('/')
@@ -427,7 +427,7 @@ def csv_upload():
                 # IMPORTANT: Also cache immediately for quick access
                 if kafka_logged:
                     kafka_message_cache[job_id] = kafka_message
-                    print(f"✅ Data cached for immediate access: {job_id}")
+                    print(f"Data cached for immediate access: {job_id}")
         
         # Always store in memory as backup
         csv_storage[job_id] = processed_data
@@ -473,21 +473,21 @@ def csv_download(job_id):
     if job_id in kafka_message_cache:
         data = kafka_message_cache[job_id].get('data')
         source = 'kafka_cache'
-        print(f"✅ Retrieved from Kafka cache: {job_id}")
+        print(f"Retrieved from Kafka cache: {job_id}")
     
     # Strategy 2: Try Kafka consumer
     if not data and kafka_consumer:
         data = get_csv_data_from_kafka(job_id)
         if data:
             source = 'kafka_consumer'
-            print(f"✅ Retrieved from Kafka consumer: {job_id}")
+            print(f"Retrieved from Kafka consumer: {job_id}")
     
     # Strategy 3: Memory fallback
     if not data:
         data = csv_storage.get(job_id)
         if data:
             source = 'memory'
-            print(f"✅ Retrieved from memory: {job_id}")
+            print(f"Retrieved from memory: {job_id}")
     
     if not data:
         return {'error': f'Job not found: {job_id}', 'searched_in': ['kafka_cache', 'kafka_consumer', 'memory']}, 404
@@ -524,21 +524,21 @@ def csv_data_api(job_id):
     if job_id in kafka_message_cache:
         data = kafka_message_cache[job_id].get('data')
         source = 'kafka_cache'
-        print(f"✅ Retrieved from Kafka cache: {job_id}")
+        print(f"Retrieved from Kafka cache: {job_id}")
     
     # Strategy 2: Try Kafka consumer
     if not data and kafka_consumer:
         data = get_csv_data_from_kafka(job_id)
         if data:
             source = 'kafka_consumer'
-            print(f"✅ Retrieved from Kafka consumer: {job_id}")
+            print(f"Retrieved from Kafka consumer: {job_id}")
     
     # Strategy 3: Memory fallback
     if not data:
         data = csv_storage.get(job_id)
         if data:
             source = 'memory'
-            print(f"✅ Retrieved from memory: {job_id}")
+            print(f"Retrieved from memory: {job_id}")
     
     if not data:
         return {
@@ -563,7 +563,7 @@ def csv_data_api(job_id):
                     else:
                         df = df[df[key] == value]
                 except Exception as e:
-                    print(f"❌ Filter error for {key}={value}: {e}")
+                    print(f"Filter error for {key}={value}: {e}")
         records = df.to_dict('records')
     
     return {
@@ -598,15 +598,15 @@ def audit_logs_api():
     }
 
 if __name__ == '__main__':
-    print("🚀 Banking Bulk API Platform Starting...")
-    print("📋 Features:")
-    print(f"   • Kafka messaging: {'✅ Enabled' if kafka_producer else '❌ Fallback mode'}")
-    print(f"   • Kafka consumer: {'✅ Enabled' if kafka_consumer else '❌ Fallback mode'}")
+    print("Banking Bulk API Platform Starting...")
+    print("Features:")
+    print(f"   • Kafka messaging: {'Enabled' if kafka_producer else 'Fallback mode'}")
+    print(f"   • Kafka consumer: {'Enabled' if kafka_consumer else 'Fallback mode'}")
     print("   • Multi-tier storage: Kafka + Cache + Memory")
     print("   • Real-time CSV processing")
     print("   • Complete audit trails")
     print("   • Legacy system integration")
     
     port = int(os.environ.get('PORT', 5000))
-    print(f"🌐 API Server starting on http://0.0.0.0:{port}")
+    print(f"API Server starting on http://0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
