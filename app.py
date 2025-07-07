@@ -612,6 +612,20 @@ def csv_upload():
         
         # Always store in memory as backup
         csv_storage[job_id] = processed_data
+
+        # Store job metadata for status endpoint
+        job_metadata = {
+            'job_id': job_id,
+            'filename': csv_file.filename,
+            'total_records': len(df),
+            'headers': list(df.columns),
+            'uploaded_at': datetime.utcnow().isoformat(),
+            'uploaded_by': requesting_team,
+            'processing_method': 'standard',
+            'file_size_mb': round(file_size / (1024 * 1024), 2),
+            'status': 'completed'
+        }
+        store_job_metadata(job_id, job_metadata)
         
         return {
             'job_id': job_id,
