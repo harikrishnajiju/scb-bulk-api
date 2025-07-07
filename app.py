@@ -545,6 +545,14 @@ def bulk_extract():
 @app.route('/api/v1/csv/upload', methods=['POST'])
 def csv_upload():
     """Original CSV upload for smaller files (under 50MB)"""
+    # DEBUG: Print request details
+    print("=== DEBUG CSV UPLOAD ===")
+    print(f"Request method: {request.method}")
+    print(f"Request files: {request.files}")
+    print(f"Request form: {request.form}")
+    print(f"Request headers: {dict(request.headers)}")
+    print(f"Content type: {request.content_type}")
+    print("========================")
     
     if 'file' not in request.files:
         return {'error': 'No CSV file provided'}, 400
@@ -649,6 +657,14 @@ def csv_upload():
 @app.route('/api/v1/csv/upload/stream', methods=['POST'])
 def csv_upload_streaming():
     """Streaming CSV upload for large files (GB scale)"""
+    # DEBUG: Print request details
+    print("=== DEBUG CSV UPLOAD ===")
+    print(f"Request method: {request.method}")
+    print(f"Request files: {request.files}")
+    print(f"Request form: {request.form}")
+    print(f"Request headers: {dict(request.headers)}")
+    print(f"Content type: {request.content_type}")
+    print("========================")
     
     if 'file' not in request.files:
         return {'error': 'No CSV file provided'}, 400
