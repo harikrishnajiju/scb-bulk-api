@@ -256,69 +256,104 @@ def get_csv_chunk(job_id, chunk_id):
     return None
 
 def store_job_metadata(job_id, metadata):
-    """Store job metadata in multiple backends"""
+    """Store job metadata in multiple backends with immediate availability"""
+    # Always store in memory first for immediate access
     job_metadata_storage[job_id] = metadata
+    print(f"✅ Job metadata stored in memory: {job_id}")
     
     # Store in Kafka
     if kafka_producer:
-        send_to_kafka(TOPICS['CSV_JOB_METADATA'], metadata, job_id)
+        kafka_success = send_to_kafka(TOPICS['CSV_JOB_METADATA'], metadata, job_id)
+        if kafka_success:
+            print(f"✅ Job metadata sent to Kafka: {job_id}")
     
     # Store in Redis
     if redis_client:
         try:
             redis_client.setex(f"job:{job_id}", 7200, json.dumps(metadata))  # 2 hour TTL
+            print(f"✅ Job metadata cached in Redis: {job_id}")
         except Exception as e:
-            print(f"Redis job metadata storage failed: {e}")
+            print(f"❌ Redis job metadata storage failed: {e}")
 
 def get_job_metadata(job_id):
-    """Retrieve job metadata from multiple backends"""
-    # Try memory first
+    """Retrieve job metadata from multiple backends with fallback"""
+    # Try memory first (fastest and most reliable)
     if job_id in job_metadata_storage:
+        print(f"✅ Job metadata retrieved from memory: {job_id}")
         return job_metadata_storage[job_id]
     
-    # Try Redis
+    # Try Redis cache
     if redis_client:
         try:
             cached_data = redis_client.get(f"job:{job_id}")
             if cached_data:
                 metadata = json.loads(cached_data)
                 job_metadata_storage[job_id] = metadata  # Cache in memory
+                print(f"✅ Job metadata retrieved from Redis: {job_id}")
                 return metadata
         except Exception as e:
-            print(f"Redis job metadata retrieval failed: {e}")
+            print(f"❌ Redis job metadata retrieval failed: {e}")
     
-    # Try Kafka consumer for metadata
-    if kafka_consumer:
-        try:
-            kafka_consumer.subscribe([TOPICS['CSV_JOB_METADATA']])
-            
-            timeout = 10
-            end_time = time.time() + timeout
-            
-            while time.time() < end_time:
-                msg = kafka_consumer.poll(timeout=1.0)
-                
-                if msg is None:
-                    continue
-                    
-                if msg.error():
-                    if msg.error().code() == KafkaError._PARTITION_EOF:
-                        continue
-                    else:
-                        break
-                
-                try:
-                    metadata = json.loads(msg.value().decode('utf-8'))
-                    if metadata.get('job_id') == job_id:
-                        job_metadata_storage[job_id] = metadata  # Cache in memory
-                        return metadata
-                except json.JSONDecodeError:
-                    continue
-                    
-        except Exception as e:
-            print(f"Kafka job metadata retrieval failed: {e}")
+    # Try Kafka cache (from recent messages)
+    if job_id in kafka_message_cache:
+        kafka_data = kafka_message_cache[job_id]
+        if isinstance(kafka_data, dict) and 'job_id' in kafka_data:
+            job_metadata_storage[job_id] = kafka_data  # Cache in memory
+            print(f"✅ Job metadata retrieved from Kafka cache: {job_id}")
+            return kafka_data
     
+    print(f"❌ Job metadata not found: {job_id}")
     return None
+
+# def get_job_metadata(job_id):
+#     """Retrieve job metadata from multiple backends"""
+#     # Try memory first
+#     if job_id in job_metadata_storage:
+#         return job_metadata_storage[job_id]
+    
+#     # Try Redis
+#     if redis_client:
+#         try:
+#             cached_data = redis_client.get(f"job:{job_id}")
+#             if cached_data:
+#                 metadata = json.loads(cached_data)
+#                 job_metadata_storage[job_id] = metadata  # Cache in memory
+#                 return metadata
+#         except Exception as e:
+#             print(f"Redis job metadata retrieval failed: {e}")
+    
+#     # Try Kafka consumer for metadata
+#     if kafka_consumer:
+#         try:
+#             kafka_consumer.subscribe([TOPICS['CSV_JOB_METADATA']])
+            
+#             timeout = 10
+#             end_time = time.time() + timeout
+            
+#             while time.time() < end_time:
+#                 msg = kafka_consumer.poll(timeout=1.0)
+                
+#                 if msg is None:
+#                     continue
+                    
+#                 if msg.error():
+#                     if msg.error().code() == KafkaError._PARTITION_EOF:
+#                         continue
+#                     else:
+#                         break
+                
+#                 try:
+#                     metadata = json.loads(msg.value().decode('utf-8'))
+#                     if metadata.get('job_id') == job_id:
+#                         job_metadata_storage[job_id] = metadata  # Cache in memory
+#                         return metadata
+#                 except json.JSONDecodeError:
+#                     continue
+                    
+#         except Exception as e:
+#             print(f"Kafka job metadata retrieval failed: {e}")
+    
+#     return None
 
 @app.route('/')
 def index():
